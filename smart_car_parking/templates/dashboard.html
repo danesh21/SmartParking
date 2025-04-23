@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Parking System | Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body data-user-id="{{ session.user_id }}">
+    <!-- Hidden audio element for notification sound -->
+    <audio id="notification-sound" preload="auto">
+        <source src="{{ url_for('static', filename='notification.mp3') }}" type="audio/mpeg">
+    </audio>
+
+    <nav class="navbar">
+        <div class="logo">
+            <i class="fas fa-car"></i>
+            <span>Smart Parking System</span>
+        </div>
+        <ul class="nav-links">
+            <li><a href="#dashboard" class="active"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+            <li><a href="#reservations"><i class="fas fa-ticket-alt"></i> My Reservations</a></li>
+            <li>
+                <a href="{{ url_for('view_notifications') }}">
+                    <i class="fas fa-bell"></i> Notifications
+                    {% if notifications %}
+                    <span class="notification-badge">{{ notifications|length }}</span>
+                    {% endif %}
+                </a>
+            </li>
+            <li><a href="#profile"><i class="fas fa-user-circle"></i> Profile</a></li>
+            <li><a href="{{ url_for('logout') }}"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+        </ul>
+    </nav>
+
+    <div class="dashboard-wrapper">
+        <div class="sidebar">
+            <div class="user-info">
+                <i class="fas fa-user-circle"></i>
+                <h3>Welcome, {{ session.username }}</h3>
+            </div>
+            <ul class="sidebar-menu">
+                <li class="active"><i class="fas fa-parking"></i> Parking Status</li>
+                <li><i class="fas fa-calendar-alt"></i> My Reservations</li>
+                <li><i class="fas fa-bell"></i> Notifications</li>
+                <li><i class="fas fa-history"></i> Reservation History</li>
+                <li><i class="fas fa-cog"></i> Settings</li>
+            </ul>
+        </div>
+
+        <div class="main-content">
+            <div class="dashboard-header">
+                <h1><i class="fas fa-car"></i> Parking Dashboard</h1>
+                
+                {% if notifications %}
+                <div class="notifications-container">
+                    {% for notification in notifications %}
+                    <div class="notification-alert">
+                        <div class="notification-content">
+                            <i class="fas fa-exclamation-circle"></i>
+                            <p>{{ notification.message }}</p>
+                        </div>
+                        <a href="{{ url_for('mark_notification_read', notification_id=notification.id) }}" class="notification-close">
+                            <i class="fas fa-times"></i>
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                
+                <div class="dashboard-stats">
+                    <div class="stat-box">
+                        <div class="stat-icon empty">
+                            <i class="fas fa-parking"></i>
+                        </div>
+                        <div class="stat-info">
+                            <h3>Empty Slots</h3>
+                            <p id="empty-count">0</p>
+                        </div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-icon occupied">
+                            <i class="fas fa-car"></i>
+                        </div>
+                        <div class="stat-info">
+                            <h3>Occupied Slots</h3>
+                            <p id="occupied-count">0</p>
+                        </div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-icon reserved">
+                            <i class="fas fa-bookmark"></i>
+                        </div>
+                        <div class="stat-info">
+                            <h3>Reserved Slots</h3>
+                            <p id="reserved-count">0</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-container">
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                    <div class="flash {{ category }}">
+                        <i class="fas fa-exclamation-circle"></i> {{ message }}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% endwith %}
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-car"></i> Parking Slot Status</h2>
+                        <span class="update-status">
+                            <i class="fas fa-sync-alt spinning"></i> Updating in real-time
+                        </span>
+                    </div>
+                    <div class="parking-map">
+                        <div class="parking-slots" id="parkingSlots">
+                            {% for slot in slots %}
+                            <div class="slot {{ 'occupied' if slot.status == 1 else 'reserved' if slot.status == 2 else 'empty' }}" id="slot-{{ slot.id }}">
+                                <div class="slot-icon">
+                                    {% if slot.status == 1 %}
+                                    <i class="fas fa-car"></i>
+                                    {% elif slot.status == 2 %}
+                                    <i class="fas fa-bookmark"></i>
+                                    {% else %}
+                                    <i class="fas fa-parking"></i>
+                                    {% endif %}
+                                </div>
+                                <h3>Slot {{ slot.id + 1 }}</h3>
+                                <p class="status-text">{{ 'Occupied' if slot.status == 1 else 'Reserved' if slot.status == 2 else 'Empty' }}</p>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-bookmark"></i> Reserve a Parking Slot</h2>
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" action="{{ url_for('reserve') }}" id="reserveForm">
+                            <div class="form-group">
+                                <label for="slot_id"><i class="fas fa-parking"></i> Select Slot</label>
+                                <select id="slot_id" name="slot_id" required>
+                                    {% for slot in slots %}
+                                    {% if slot.status == 0 %}
+                                    <option value="{{ slot.id }}">Slot {{ slot.id + 1 }}</option>
+                                    {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <button type="submit" class="btn-reserve">
+                                <span>Reserve Now</span> <i class="fas fa-check-circle"></i>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-calendar-alt"></i> My Active Reservations</h2>
+                    </div>
+                    <div class="card-body">
+                        {% if user_reservations %}
+                        <div class="reservations-list">
+                            {% for reservation in user_reservations %}
+                            <div class="reservation-item">
+                                <div class="reservation-info">
+                                    <h3>Slot {{ reservation.parking_spot + 1 }}</h3>
+                                    <p><i class="fas fa-clock"></i> Reserved on: {{ reservation.time_in.strftime('%Y-%m-%d %H:%M') }}</p>
+                                </div>
+                                <div class="reservation-actions">
+                                    <form method="POST" action="{{ url_for('cancel_reservation', reservation_id=reservation.id) }}">
+                                        <button type="submit" class="btn-cancel">
+                                            <i class="fas fa-times-circle"></i> Cancel
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="no-data">You don't have any active reservations.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>Made with ❤️ in Malaysia 🇲🇾</p>
+    </footer>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script>
+        // Connect to WebSocket server
+        var socket = io();
+
+        // Join user-specific room for notifications
+        socket.emit('join', { room: 'user_{{ session.user_id }}' });
+
+        // Listen for 'parking_update' events
+        socket.on('parking_update', function(data) {
+            updateParkingSlots(data.slots);
+        });
+
+        // Listen for new notifications
+        socket.on('new_notification', function(data) {
+            showNotificationPopup(data.message);
+            
+            // Reload page after a short delay to show the notification in the dashboard
+            setTimeout(function() {
+                location.reload();
+            }, 5000);
+        });
+
+        function updateParkingSlots(slots) {
+            let emptyCount = 0;
+            let occupiedCount = 0;
+            let reservedCount = 0;
+
+            // Update the UI with new parking data
+            for (let i = 0; i < slots.length; i++) {
+                let slot = slots[i];
+                let slotElement = document.getElementById('slot-' + slot.id);
+
+                if (!slotElement) continue;
+
+                // Reset classes
+                slotElement.classList.remove('empty', 'occupied', 'reserved');
+
+                // Add appropriate class and icon
+                let iconElement = slotElement.querySelector('.slot-icon i');
+                let statusText = slotElement.querySelector('.status-text');
+
+                if (slot.status === 0) {
+                    slotElement.classList.add('empty');
+                    statusText.textContent = 'Empty';
+                    iconElement.className = 'fas fa-parking';
+                    emptyCount++;
+                } else if (slot.status === 1) {
+                    slotElement.classList.add('occupied');
+                    statusText.textContent = 'Occupied';
+                    iconElement.className = 'fas fa-car';
+                    occupiedCount++;
+                } else if (slot.status === 2) {
+                    slotElement.classList.add('reserved');
+                    statusText.textContent = 'Reserved';
+                    iconElement.className = 'fas fa-bookmark';
+                    reservedCount++;
+                }
+            }
+
+            // Update counters
+            document.getElementById('empty-count').textContent = emptyCount;
+            document.getElementById('occupied-count').textContent = occupiedCount;
+            document.getElementById('reserved-count').textContent = reservedCount;
+
+            // Update the select dropdown options
+            let select = document.getElementById('slot_id');
+            if (select) {
+                select.innerHTML = '';
+
+                for (let i = 0; i < slots.length; i++) {
+                    if (slots[i].status === 0) {
+                        let option = document.createElement('option');
+                        option.value = slots[i].id;
+                        option.textContent = 'Slot ' + (slots[i].id + 1);
+                        select.appendChild(option);
+                    }
+                }
+                
+                // If no slots available, disable form
+                const reserveForm = document.getElementById('reserveForm');
+                const reserveBtn = reserveForm.querySelector('.btn-reserve');
+                
+                if (select.options.length === 0) {
+                    select.innerHTML = '<option value="">No slots available</option>';
+                    reserveBtn.disabled = true;
+                    reserveBtn.innerHTML = '<span>No Available Slots</span> <i class="fas fa-times-circle"></i>';
+                } else {
+                    reserveBtn.disabled = false;
+                    reserveBtn.innerHTML = '<span>Reserve Now</span> <i class="fas fa-check-circle"></i>';
+                }
+            }
+
+            // Flash animation for the update indicator
+            let updateIcon = document.querySelector('.update-status i');
+            updateIcon.classList.add('flash');
+            setTimeout(() => {
+                updateIcon.classList.remove('flash');
+            }, 1000);
+        }
+
+        // Initial count update
+        window.onload = function() {
+            let slots = [];
+            {% for slot in slots %}
+                slots.push({id: {{ slot.id }}, status: {{ slot.status }}});
+            {% endfor %}
+            updateParkingSlots(slots);
+        };
+
+        // Function to show notification popup
+        function showNotificationPopup(message) {
+            // Create popup element
+            var popup = document.createElement('div');
+            popup.className = 'notification-popup';
+            
+            // Create content
+            popup.innerHTML = `
+                <div class="notification-popup-header">
+                    <i class="fas fa-bell"></i>
+                    <span>New Notification</span>
+                    <button class="notification-close"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="notification-popup-content">
+                    <p>${message}</p>
+                </div>
+            `;
+            
+            // Add to body
+            document.body.appendChild(popup);
+            
+            // Add animation class
+            setTimeout(function() {
+                popup.classList.add('show');
+            }, 100);
+            
+            // Add close functionality
+            popup.querySelector('.notification-close').addEventListener('click', function() {
+                popup.classList.remove('show');
+                setTimeout(function() {
+                    popup.remove();
+                }, 300);
+            });
+            
+            // Auto close after 10 seconds
+            setTimeout(function() {
+                if (popup.parentNode) {
+                    popup.classList.remove('show');
+                    setTimeout(function() {
+                        if (popup.parentNode) {
+                            popup.remove();
+                        }
+                    }, 300);
+                }
+            }, 10000);
+            
+            // Play notification sound if available
+            var notificationSound = document.getElementById('notification-sound');
+            if (notificationSound) {
+                notificationSound.play().catch(function(error) {
+                    // Ignore autoplay errors - happens in browsers with strict autoplay policies
+                    console.log("Audio play failed:", error);
+                });
+            }
+        }
+    </script>
+</body>
+</html>
